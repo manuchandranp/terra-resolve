@@ -38,7 +38,8 @@ jobs:
           # JF_PROJECT: ${{ vars.JF_PROJECT }} 
         with:
           # The name of your OIDC provider integration in JFrog Access
-          oidc-provider-name: giri-oidc
+          oidc-provider-name: manu-new
+          oidc-audience: newmanu
 
       # Step 2: A quick verification step to confirm OIDC authentication is working
       - name: Verify OIDC User
