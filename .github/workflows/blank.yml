@@ -1,0 +1,108 @@
+name: Build and Publish Terraform Module
+on:
+  push:
+    branches:
+      - main
+
+# Permissions needed for OIDC authentication and build processes
+permissions:
+  actions: read    # for detecting the Github Actions environment.
+  id-token: write # for creating OIDC tokens for authentication.
+  contents: read  # for actions/checkout to read the repository content.
+
+jobs:
+  build-and-publish-terraform:
+    runs-on: ubuntu-latest
+
+    # Environment variables for easy configuration
+    env:
+      # --- IMPORTANT: UPDATE THESE VARIABLES ---
+      # The name of your Terraform module. This will be used in the Artifactory path.
+      MODULE_NAME: 'my-terraform-module'
+      # The Artifactory generic repository where the module will be stored.
+      TF_REPO: 'manu-terra-local'
+      
+      # --- JFrog Platform Details ---
+      JF_URL: https://hts2.jfrog.io
+      # The version for the module. Using the GitHub run number for automatic versioning.
+      MODULE_VERSION: '1.0.${{ github.run_number }}'
+
+    steps:
+      # Step 1: Set up the JFrog CLI with OIDC for secure, passwordless authentication
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        id: setup-cli # Give this step an ID to reference its outputs
+        env:
+          JF_URL: ${{ env.JF_URL }}
+          # The JF_PROJECT variable is optional but recommended if you use JFrog Projects
+          # JF_PROJECT: ${{ vars.JF_PROJECT }} 
+        with:
+          # The name of your OIDC provider integration in JFrog Access
+          oidc-provider-name: manu-new
+
+      # Step 2: A quick verification step to confirm OIDC authentication is working
+      - name: Verify OIDC User
+        run: |
+          echo "Successfully authenticated with OIDC user: ${{ steps.setup-cli.outputs.oidc-user }}"
+            
+      # Step 3: Check out the repository code so we can access the module files
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      # --- !! STEP 4 (Corrected) !! ---
+      # This is now a two-part process.
+            
+      # Step 4a: Create the .zip archive manually
+      - name: Archive Terraform Module
+        run: |
+          # Use 'git ls-files' to pipe all tracked files to the zip command.
+          # The -@ flag tells zip to read the list of files from standard input.
+          git ls-files | zip module.zip -@
+                  
+      # Step 4b: Upload the pre-packaged archive to Artifactory
+      - name: Upload Terraform Module
+        run: |
+          # This command uploads the *specific file* 'module.zip'.
+          jf rt u \
+            "module.zip" \
+            "${{ env.TF_REPO }}/${{ env.MODULE_NAME }}/${{ env.MODULE_VERSION }}/" \
+            --build-name=${{ github.run.id }}-${{ github.job }} \
+            --build-number=${{ github.run_number }}
+            
+      # Step 5: Collect environment variables and git details to enrich the build info
+      - name: Publish Build Info
+        run: |
+          # Collect environment variables associated with the build
+          jf rt build-collect-env
+          # Add git revision and URL to the build info
+          jf rt build-add-git
+          # Publish the final build information to Artifactory
+          jf rt build-publish
+      # Step 6: Setup Terraform CLI on the runner
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+      
+      # Step 7: Configure Terraform to use Artifactory for module resolution
+      - name: Configure Terraform for Artifactory
+        env:
+          ARTIFACTORY_TOKEN: ${{ steps.setup-cli.outputs.oidc-access-token }}
+        run: |
+          # The 'jf terraform-config --repo-resolve' flag is not available in this
+          # version of the JFrog CLI. We will manually create the .terraformrc file
+          # to configure credentials for Artifactory using the OIDC token.
+          # This allows 'terraform init' to download modules from Artifactory.
+          
+          # Extract hostname from the JF_URL for the credentials block
+          HOSTNAME=$(echo $JF_URL | sed -e 's;https://;;' -e 's;/.*$;;')
+          echo "Configuring credentials in ~/.terraformrc for host: $HOSTNAME"
+          cat <<EOF > ~/.terraformrc
+          credentials "$HOSTNAME" {
+            token = "${ARTIFACTORY_TOKEN}"
+          }
+          EOF
+          echo "Successfully created ~/.terraformrc"
+          # Optional: Display the content for debugging
+          cat ~/.terraformrc
+      # Step 8: Initialize Terraform to download providers and modules
+      - name: Terraform Init
+        run: terraform init
