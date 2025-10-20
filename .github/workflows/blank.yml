@@ -20,7 +20,7 @@ jobs:
       # The name of your Terraform module. This will be used in the Artifactory path.
       MODULE_NAME: 'my-terraform-module'
       # The Artifactory generic repository where the module will be stored.
-      TF_REPO: 'manu-terra-local'
+      TF_REPO: 'giri-terraform-terraform-modules-local'
       
       # --- JFrog Platform Details ---
       JF_URL: https://hts2.jfrog.io
@@ -38,7 +38,7 @@ jobs:
           # JF_PROJECT: ${{ vars.JF_PROJECT }} 
         with:
           # The name of your OIDC provider integration in JFrog Access
-          oidc-provider-name: manu-new
+          oidc-provider-name: giri-oidc
 
       # Step 2: A quick verification step to confirm OIDC authentication is working
       - name: Verify OIDC User
