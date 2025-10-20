@@ -39,7 +39,6 @@ jobs:
         with:
           # The name of your OIDC provider integration in JFrog Access
           oidc-provider-name: manu-new
-          oidc-audience: newmanu
 
       # Step 2: A quick verification step to confirm OIDC authentication is working
       - name: Verify OIDC User
@@ -79,31 +78,52 @@ jobs:
           jf rt build-add-git
           # Publish the final build information to Artifactory
           jf rt build-publish
-      # Step 6: Setup Terraform CLI on the runner
+
+      # Step 6: Create main.tf to test module resolution
+      - name: Create main.tf for testing
+        run: |
+          # Create a basic Terraform configuration that uses the module we just published.
+          # This allows `terraform init` to test the download from Artifactory.
+          # The source URL must include the /artifactory/ context root for direct downloads.
+          cat <<EOF > main.tf
+          module "test_module" {
+            source = "${{ env.JF_URL }}/artifactory/${{ env.TF_REPO }}/${{ env.MODULE_NAME }}/${{ env.MODULE_VERSION }}/module.zip"
+          }
+          EOF
+
+          echo "Created main.tf for testing:"
+          cat main.tf
+
+      # Step 7: Setup Terraform CLI on the runner
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
       
-      # Step 7: Configure Terraform to use Artifactory for module resolution
+      # Step 8: Configure Terraform to use Artifactory for module resolution
       - name: Configure Terraform for Artifactory
         env:
           ARTIFACTORY_TOKEN: ${{ steps.setup-cli.outputs.oidc-access-token }}
         run: |
-          # The 'jf terraform-config --repo-resolve' flag is not available in this
-          # version of the JFrog CLI. We will manually create the .terraformrc file
-          # to configure credentials for Artifactory using the OIDC token.
-          # This allows 'terraform init' to download modules from Artifactory.
+          # For direct HTTPS sources, Terraform uses a .netrc file for credentials,
+          # not .terraformrc. We create this file so Terraform can authenticate
+          # to Artifactory using the OIDC token.
           
           # Extract hostname from the JF_URL for the credentials block
           HOSTNAME=$(echo $JF_URL | sed -e 's;https://;;' -e 's;/.*$;;')
-          echo "Configuring credentials in ~/.terraformrc for host: $HOSTNAME"
-          cat <<EOF > ~/.terraformrc
-          credentials "$HOSTNAME" {
-            token = "${ARTIFACTORY_TOKEN}"
-          }
+
+          echo "Configuring credentials in ~/.netrc for host: $HOSTNAME"
+
+          # The username can be a placeholder; the password must be the token.
+          cat <<EOF > ~/.netrc
+          machine $HOSTNAME
+          login github-actions-user
+          password ${ARTIFACTORY_TOKEN}
           EOF
-          echo "Successfully created ~/.terraformrc"
-          # Optional: Display the content for debugging
-          cat ~/.terraformrc
-      # Step 8: Initialize Terraform to download providers and modules
+
+          # .netrc files require strict permissions to be read by most tools.
+          chmod 600 ~/.netrc
+
+          echo "Successfully created ~/.netrc"
+
+      # Step 9: Initialize Terraform to download providers and modules
       - name: Terraform Init
         run: terraform init
